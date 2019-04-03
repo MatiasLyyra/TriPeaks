@@ -396,7 +396,7 @@ func (n *Node) GetUnvisitedChild() *Node {
 	if len(unvisited) == 0 {
 		return nil
 	}
-	return unvisited[rand.Intn(len(unvisited))]
+	return unvisited[0]
 }
 
 func (n *Node) ChildPos(pos int) int {
@@ -437,13 +437,13 @@ func NewNode() *Node {
 	}
 }
 
-func MctsSearch(game *TriPeaks) int {
-	// Dont bother searching the game tree
-	//if there is only one legal move to make
-	initialLegalMoves, _ := game.LegalMoves()
-	if len(initialLegalMoves) == 1 {
-		return initialLegalMoves[0]
-	}
+type SearchResult struct {
+	Move  int
+	Score float64
+}
+
+func MctsSearch(game *TriPeaks, determinizations, trajectories int) []SearchResult {
+	random := rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
 	unusedCards := UnusedCards(game)
 	rootRewards := make(map[int]float64)
 	gameCopy := &TriPeaks{}
@@ -451,19 +451,19 @@ func MctsSearch(game *TriPeaks) int {
 		root            *Node
 		unusedCardsCopy []Card
 	)
-	for i := 0; i < 20; i++ {
+	for i := 0; i < determinizations; i++ {
 		root = NewNode()
 		unusedCardsCopy = make([]Card, len(unusedCards))
 		CopyCards(unusedCardsCopy, unusedCards)
 		root.CardsLeft = unusedCards
-		for j := 0; j < 8000; j++ {
+		for j := 0; j < trajectories; j++ {
 			gameCopy = game.Copy()
 			var node *Node
 			node = MctsSelect(gameCopy, root)
 			if !gameCopy.GameOver() {
-				node = DeterminizeState(node, gameCopy)
+				node = DeterminizeState(node, gameCopy, random)
 			}
-			reward := MctsSimulation(gameCopy, node, unusedCardsCopy)
+			reward := MctsSimulation(gameCopy, node, random)
 			MctsBackpropagate(node, reward)
 		}
 		for _, child := range root.Children {
@@ -474,16 +474,14 @@ func MctsSearch(game *TriPeaks) int {
 			}
 		}
 	}
-	bestMove := -1
-	highestScore := -1.0
+	searchResult := make([]SearchResult, 0)
 	for move, score := range rootRewards {
-		fmt.Printf("Move %d Score: %f\n", move, score)
-		if score > highestScore {
-			bestMove = move
-			highestScore = score
-		}
+		searchResult = append(searchResult, SearchResult{
+			Move:  move,
+			Score: score,
+		})
 	}
-	return bestMove
+	return searchResult
 }
 
 func UnusedCards(game *TriPeaks) []Card {
@@ -516,7 +514,7 @@ func MctsSelect(game *TriPeaks, node *Node) *Node {
 	}
 	return selected
 }
-func DeterminizeState(node *Node, game *TriPeaks) *Node {
+func DeterminizeState(node *Node, game *TriPeaks, random *rand.Rand) *Node {
 	cNode := NewNode()
 	moves, _ := game.LegalMoves()
 	usedMoves := make(map[int]struct{})
@@ -533,12 +531,12 @@ func DeterminizeState(node *Node, game *TriPeaks) *Node {
 		// if len(node.Children) == 0 {
 		// 	panic("Node doesn't have any children")
 		// }
-		ind := rand.Intn(len(node.Children))
+		ind := random.Intn(len(node.Children))
 		node = node.Children[ind]
 		ApplyNode(game, node)
 		return node
 	}
-	cNode.Pos = unusedMoves[rand.Intn(len(unusedMoves))]
+	cNode.Pos = unusedMoves[random.Intn(len(unusedMoves))]
 	cNode.Parent = node
 	node.Children = append(node.Children, cNode)
 	cNode.CardsLeft = make([]Card, len(node.CardsLeft))
@@ -548,7 +546,7 @@ func DeterminizeState(node *Node, game *TriPeaks) *Node {
 		// if game.Deck.Len() == 0 {
 		// 	panic("Cannot draw from empty deck")
 		// }
-		ind := rand.Intn(len(cNode.CardsLeft))
+		ind := random.Intn(len(cNode.CardsLeft))
 		randCard := cNode.CardsLeft[ind]
 		cNode.CardsLeft = RemoveCard(cNode.CardsLeft, ind)
 		cNode.LeftDet = Deter{
@@ -557,11 +555,8 @@ func DeterminizeState(node *Node, game *TriPeaks) *Node {
 		}
 	} else {
 		leftPos, rightPos := game.CheckReveals(cNode.Pos)
-		cNodeLeft, cNodeRight := cNode.GetPositionalSiblings()
-		if cNodeLeft != nil && cNodeLeft.RightDet.Initialized {
-			cNode.LeftDet = cNodeLeft.RightDet
-		} else if leftPos != -1 && game.Cards[leftPos].ChildLeft-1 == 0 {
-			ind := rand.Intn(len(cNode.CardsLeft))
+		if leftPos != -1 && game.Cards[leftPos].ChildLeft-1 == 0 {
+			ind := random.Intn(len(cNode.CardsLeft))
 			randCard := cNode.CardsLeft[ind]
 			cNode.CardsLeft = RemoveCard(cNode.CardsLeft, ind)
 			cNode.LeftDet = Deter{
@@ -570,10 +565,8 @@ func DeterminizeState(node *Node, game *TriPeaks) *Node {
 				Initialized: true,
 			}
 		}
-		if cNodeRight != nil && cNodeRight.LeftDet.Initialized {
-			cNode.RightDet = cNodeRight.LeftDet
-		} else if rightPos != -1 && game.Cards[rightPos].ChildLeft-1 == 0 {
-			ind := rand.Intn(len(cNode.CardsLeft))
+		if rightPos != -1 && game.Cards[rightPos].ChildLeft-1 == 0 {
+			ind := random.Intn(len(cNode.CardsLeft))
 			randCard := cNode.CardsLeft[ind]
 			cNode.CardsLeft = RemoveCard(cNode.CardsLeft, ind)
 			cNode.RightDet = Deter{
@@ -586,9 +579,9 @@ func DeterminizeState(node *Node, game *TriPeaks) *Node {
 	ApplyNode(game, cNode)
 	return cNode
 }
-func MctsSimulation(game *TriPeaks, node *Node, unusedCards []Card) float64 {
+func MctsSimulation(game *TriPeaks, node *Node, random *rand.Rand) float64 {
 	for !game.GameOver() {
-		node = DeterminizeState(node, game)
+		node = DeterminizeState(node, game, random)
 	}
 	if game.CardsLeft == 0 {
 		return 1.0
