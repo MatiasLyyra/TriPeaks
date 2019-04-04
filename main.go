@@ -628,10 +628,13 @@ func MctsSimulation(game *TriPeaks, node *Node, random *rand.Rand) float64 {
 	for !game.GameOver() {
 		node = DeterminizeState(node, game, random)
 	}
+
+	clearBonus := 0.0
 	if game.CardsLeft == 0 {
-		return 1.0
+		clearBonus = 0.2
 	}
-	return 0.0
+
+	return 0.8 - (float64(game.CardsLeft)/28.0)*0.8 + clearBonus
 }
 
 func MctsBackpropagate(node *Node, reward float64) {
