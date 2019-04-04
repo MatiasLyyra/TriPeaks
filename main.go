@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"strconv"
 	"time"
 )
@@ -375,15 +376,34 @@ type Deter struct {
 	Initialized bool
 }
 
-type Node struct {
-	X         float64
-	N         int
-	Pos       int
-	LeftDet   Deter
-	RightDet  Deter
-	Parent    *Node
-	Children  []*Node
+type NodeData struct {
 	CardsLeft []Card
+}
+
+type Node struct {
+	X        float64
+	N        int
+	Pos      int
+	leftDet  Deter
+	rightDet Deter
+	Parent   *Node
+	Children []*Node
+	Data     *NodeData
+}
+
+func (n *Node) SetLeft(det Deter) {
+	if n.leftDet.Initialized {
+		panic("Overwriting old determinization")
+	} else {
+		n.leftDet = det
+	}
+}
+func (n *Node) SetRight(det Deter) {
+	if n.rightDet.Initialized {
+		panic("Overwriting old determinization")
+	} else {
+		n.rightDet = det
+	}
 }
 
 func (n *Node) GetUnvisitedChild() *Node {
@@ -408,23 +428,34 @@ func (n *Node) ChildPos(pos int) int {
 	return -1
 }
 
-func (n *Node) GetPositionalSiblings() (*Node, *Node) {
+func (n *Node) GetParentDeterminization(pos int, left bool) bool {
 	if n.Parent == nil {
-		return nil, nil
+		return false
 	}
-	var (
-		leftNode  *Node
-		rightNode *Node
-	)
-	left := n.Parent.ChildPos(n.Pos - 1)
-	right := n.Parent.ChildPos(n.Pos + 1)
-	if left != -1 {
-		leftNode = n.Parent.Children[left]
+	assignL := func(p *Node) {
+		if left {
+			n.SetLeft(p.leftDet)
+		} else {
+			n.SetRight(p.leftDet)
+		}
 	}
-	if right != -1 {
-		rightNode = n.Parent.Children[right]
+	assignR := func(p *Node) {
+		if left {
+			n.SetLeft(p.rightDet)
+		} else {
+			n.SetRight(p.rightDet)
+		}
 	}
-	return leftNode, rightNode
+	for parent := n.Parent; parent != nil; parent = parent.Parent {
+		if parent.leftDet.Pos == pos {
+			assignL(parent)
+			return true
+		} else if parent.rightDet.Pos == pos {
+			assignR(parent)
+			return true
+		}
+	}
+	return false
 }
 
 func NewNode() *Node {
@@ -453,10 +484,14 @@ func MctsSearch(game *TriPeaks, determinizations, trajectories int) []SearchResu
 	)
 	for i := 0; i < determinizations; i++ {
 		root = NewNode()
-		unusedCardsCopy = make([]Card, len(unusedCards))
-		CopyCards(unusedCardsCopy, unusedCards)
-		root.CardsLeft = unusedCards
+
 		for j := 0; j < trajectories; j++ {
+			unusedCardsCopy = make([]Card, len(unusedCards))
+			CopyCards(unusedCardsCopy, unusedCards)
+			data := &NodeData{
+				CardsLeft: unusedCardsCopy,
+			}
+			root.Data = data
 			gameCopy = game.Copy()
 			var node *Node
 			node = MctsSelect(gameCopy, root)
@@ -506,7 +541,9 @@ func MctsSelect(game *TriPeaks, node *Node) *Node {
 		moves, _ := game.LegalMoves()
 		totalMoves := len(moves)
 		if node.GetUnvisitedChild() == nil && len(node.Children) == totalMoves {
-			selected = Ucb1(selected)
+			cNode := Ucb1(selected)
+			cNode.Data = selected.Data
+			selected = cNode
 			ApplyNode(game, selected)
 		} else {
 			break
@@ -532,48 +569,56 @@ func DeterminizeState(node *Node, game *TriPeaks, random *rand.Rand) *Node {
 		// 	panic("Node doesn't have any children")
 		// }
 		ind := random.Intn(len(node.Children))
-		node = node.Children[ind]
-		ApplyNode(game, node)
-		return node
+		cNode = node.Children[ind]
+		cNode.Data = node.Data
+		ApplyNode(game, cNode)
+		return cNode
 	}
 	cNode.Pos = unusedMoves[random.Intn(len(unusedMoves))]
 	cNode.Parent = node
 	node.Children = append(node.Children, cNode)
-	cNode.CardsLeft = make([]Card, len(node.CardsLeft))
-	CopyCards(cNode.CardsLeft, node.CardsLeft)
+	cNode.Data = node.Data
 
 	if cNode.Pos == -1 {
-		// if game.Deck.Len() == 0 {
-		// 	panic("Cannot draw from empty deck")
-		// }
-		ind := random.Intn(len(cNode.CardsLeft))
-		randCard := cNode.CardsLeft[ind]
-		cNode.CardsLeft = RemoveCard(cNode.CardsLeft, ind)
-		cNode.LeftDet = Deter{
+		ind := random.Intn(len(cNode.Data.CardsLeft))
+		randCard := cNode.Data.CardsLeft[ind]
+		cNode.Data.CardsLeft = RemoveCard(cNode.Data.CardsLeft, ind)
+		cNode.SetLeft(Deter{
 			Card:        randCard,
 			Initialized: true,
-		}
+		})
 	} else {
 		leftPos, rightPos := game.CheckReveals(cNode.Pos)
-		if leftPos != -1 && game.Cards[leftPos].ChildLeft-1 == 0 {
-			ind := random.Intn(len(cNode.CardsLeft))
-			randCard := cNode.CardsLeft[ind]
-			cNode.CardsLeft = RemoveCard(cNode.CardsLeft, ind)
-			cNode.LeftDet = Deter{
+		var (
+			leftFound  bool
+			rightFound bool
+		)
+		if leftPos != -1 {
+			leftFound = cNode.GetParentDeterminization(leftPos, true)
+		}
+		if rightPos != -1 {
+			rightFound = cNode.GetParentDeterminization(rightPos, false)
+
+		}
+		if !leftFound && leftPos != -1 && game.Cards[leftPos].ChildLeft-1 == 0 {
+			ind := random.Intn(len(cNode.Data.CardsLeft))
+			randCard := cNode.Data.CardsLeft[ind]
+			cNode.Data.CardsLeft = RemoveCard(cNode.Data.CardsLeft, ind)
+			cNode.SetLeft(Deter{
 				Card:        randCard,
 				Pos:         leftPos,
 				Initialized: true,
-			}
+			})
 		}
-		if rightPos != -1 && game.Cards[rightPos].ChildLeft-1 == 0 {
-			ind := random.Intn(len(cNode.CardsLeft))
-			randCard := cNode.CardsLeft[ind]
-			cNode.CardsLeft = RemoveCard(cNode.CardsLeft, ind)
-			cNode.RightDet = Deter{
+		if !rightFound && rightPos != -1 && game.Cards[rightPos].ChildLeft-1 == 0 {
+			ind := random.Intn(len(cNode.Data.CardsLeft))
+			randCard := cNode.Data.CardsLeft[ind]
+			cNode.Data.CardsLeft = RemoveCard(cNode.Data.CardsLeft, ind)
+			cNode.SetRight(Deter{
 				Card:        randCard,
 				Pos:         rightPos,
 				Initialized: true,
-			}
+			})
 		}
 	}
 	ApplyNode(game, cNode)
@@ -635,20 +680,20 @@ func Ucb1(node *Node) *Node {
 }
 
 func ApplyNode(game *TriPeaks, node *Node) {
-	if node.Pos == -1 && node.LeftDet.Initialized {
+	if node.Pos == -1 && node.leftDet.Initialized {
 		deckLen := game.Deck.Len()
-		game.Deck.Cards[deckLen-1] = node.LeftDet.Card
+		game.Deck.Cards[deckLen-1] = node.leftDet.Card
 		game.Draw()
-		if node.LeftDet.Card.HashCode() != game.Discard().HashCode() {
+		if node.leftDet.Card.HashCode() != game.Discard().HashCode() {
 			panic("Discard card differs from determinization, should not happen")
 		}
 		// unusedCards = RemoveCardVal(unusedCards, node.LeftDet.Card)
 	} else {
-		if leftDet := node.LeftDet; leftDet.Initialized {
+		if leftDet := node.leftDet; leftDet.Initialized {
 			game.Cards[leftDet.Pos].Card = leftDet.Card
 			// unusedCards = RemoveCardVal(unusedCards, leftDet.Card)
 		}
-		if rightDet := node.RightDet; rightDet.Initialized {
+		if rightDet := node.rightDet; rightDet.Initialized {
 			game.Cards[rightDet.Pos].Card = rightDet.Card
 			// unusedCards = RemoveCardVal(unusedCards, rightDet.Card)
 		}
@@ -660,9 +705,14 @@ func ApplyNode(game *TriPeaks, node *Node) {
 }
 
 func main() {
+	threads := 3 //runtime.NumCPU()
+	runtime.GOMAXPROCS(threads)
 	deck := NewDeck()
 	deck.Shuffle()
 	game := NewTripeaks(*deck)
+	determinizations := 30 / threads
+	trajectories := 45000
+	fmt.Printf("Running %d determinizations wtih %d trajectories using %d cores\n", determinizations, trajectories, threads)
 	for {
 		legalMoves, _ := game.LegalMoves()
 		if game.CardsLeft == 0 {
@@ -674,13 +724,41 @@ func main() {
 		}
 		fmt.Printf("%s", game)
 		fmt.Printf("Cards in deck: %d\t\t\t\tDiscard: %s\n", game.Deck.Len(), game.Discard())
-		move := MctsSearch(game)
-		if move == -1 {
+		movesMap := make(map[int]float64)
+		movesChan := make(chan []SearchResult, 2)
+		for i := 0; i < threads; i++ {
+			go func() {
+				movesChan <- MctsSearch(game, determinizations, trajectories)
+			}()
+		}
+		highestScore := -1.0
+		action := -1
+		i := 0
+		for moves := range movesChan {
+			fmt.Printf("Thread %d results:\n", i)
+			for _, move := range moves {
+				fmt.Printf("Action %d Score: %f\n", move.Move, move.Score)
+				if _, exists := movesMap[move.Move]; exists {
+					movesMap[move.Move] += move.Score
+				} else {
+					movesMap[move.Move] = move.Score
+				}
+				if movesMap[move.Move] > highestScore {
+					highestScore = movesMap[move.Move]
+					action = move.Move
+				}
+			}
+			i++
+			if i >= threads {
+				break
+			}
+		}
+		if action == -1 {
 			fmt.Printf("AI Chose to draw a card\n")
 			game.Draw()
 		} else {
-			fmt.Printf("AI Chose to discard card on position: %d\n", move)
-			game.Select(move)
+			fmt.Printf("AI Chose to discard card on position: %d\n", action)
+			game.Select(action)
 		}
 	}
 
