@@ -32,3 +32,7 @@
 [[constraint]]
   branch = "master"
   name = "github.com/jinzhu/copier"
+
+[[constraint]]
+  name = "github.com/awalterschulze/gographviz"
+  version = "2.0.0"
