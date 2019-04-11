@@ -5,7 +5,9 @@ import (
 	"io"
 	"log"
 	"math"
+	"math/rand"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/MatiasLyyra/TriPeaks/deck"
@@ -48,7 +50,9 @@ func WriteCsv(results []BenchmarkResult, w io.Writer) {
 	}
 }
 
-func benchmarkSearch(options BenchmarkOptions) BenchmarkResult {
+type AiFunc func(*game.TriPeaks, BenchmarkOptions) int
+
+func benchmarkSearch(options BenchmarkOptions, ai AiFunc) BenchmarkResult {
 	r := BenchmarkResult{
 		Name:             options.Name,
 		Determinizations: options.Determinizations * options.Threads,
@@ -60,7 +64,7 @@ func benchmarkSearch(options BenchmarkOptions) BenchmarkResult {
 		stock.Shuffle()
 		triGame := game.NewTripeaks(*stock)
 		for !triGame.GameOver() {
-			move := search(triGame, options)
+			move := ai(triGame, options)
 			if move == -1 {
 				triGame.Draw()
 			} else {
@@ -76,8 +80,11 @@ func benchmarkSearch(options BenchmarkOptions) BenchmarkResult {
 	}
 	return r
 }
-
-func search(triGame *game.TriPeaks, options BenchmarkOptions) int {
+func random(triGame *game.TriPeaks, options BenchmarkOptions) int {
+	legals, _ := triGame.LegalMoves()
+	return legals[rand.Intn(len(legals))]
+}
+func mctsSearch(triGame *game.TriPeaks, options BenchmarkOptions) int {
 	movesMap := make(map[int]float64)
 	movesChan := make(chan []mcts.SearchResult, 2)
 	for i := 0; i < options.Threads; i++ {
@@ -109,25 +116,144 @@ func search(triGame *game.TriPeaks, options BenchmarkOptions) int {
 }
 
 func main() {
+	runtime.GOMAXPROCS(10)
 	results := make([]BenchmarkResult, 0, 10)
+
+	rand.Seed(time.Now().UnixNano())
 	options := BenchmarkOptions{
+		Name:             "Random",
+		N:                500,
+		Threads:          1,
+		Determinizations: 0,
+		Trajectories:     0,
+		Eval:             nil,
+	}
+	results = append(results, benchmarkSearch(options, random))
+
+	options = BenchmarkOptions{
 		Name:             "LinearEval 1",
 		N:                500,
 		Threads:          10,
 		Determinizations: 1,
-		Trajectories:     1000,
+		Trajectories:     1500,
 		Eval:             mcts.LinearEval,
 	}
-	results = append(results, benchmarkSearch(options))
+	results = append(results, benchmarkSearch(options, mctsSearch))
+	options = BenchmarkOptions{
+		Name:             "LinearEval 2",
+		N:                500,
+		Threads:          10,
+		Determinizations: 5,
+		Trajectories:     2500,
+		Eval:             mcts.LinearEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+	options = BenchmarkOptions{
+		Name:             "LinearEval 3",
+		N:                500,
+		Threads:          10,
+		Determinizations: 10,
+		Trajectories:     3500,
+		Eval:             mcts.LinearEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+
+	options = BenchmarkOptions{
+		Name:             "BinaryEval 1",
+		N:                500,
+		Threads:          10,
+		Determinizations: 1,
+		Trajectories:     1500,
+		Eval:             mcts.BinaryEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+	options = BenchmarkOptions{
+		Name:             "BinaryEval 2",
+		N:                500,
+		Threads:          10,
+		Determinizations: 5,
+		Trajectories:     2500,
+		Eval:             mcts.BinaryEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+	options = BenchmarkOptions{
+		Name:             "BinaryEval 3",
+		N:                500,
+		Threads:          10,
+		Determinizations: 10,
+		Trajectories:     3500,
+		Eval:             mcts.BinaryEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+
+	options = BenchmarkOptions{
+		Name:             "ScoreEval 1",
+		N:                500,
+		Threads:          10,
+		Determinizations: 1,
+		Trajectories:     1500,
+		Eval:             mcts.ScoreEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+	options = BenchmarkOptions{
+		Name:             "ScoreEval 2",
+		N:                500,
+		Threads:          10,
+		Determinizations: 5,
+		Trajectories:     2500,
+		Eval:             mcts.ScoreEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+	options = BenchmarkOptions{
+		Name:             "ScoreEval 3",
+		N:                500,
+		Threads:          10,
+		Determinizations: 10,
+		Trajectories:     3500,
+		Eval:             mcts.ScoreEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+
+	options = BenchmarkOptions{
+		Name:             "ScoreSigmoidEval 1",
+		N:                500,
+		Threads:          10,
+		Determinizations: 1,
+		Trajectories:     1500,
+		Eval:             mcts.ScoreSigmoidEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+	options = BenchmarkOptions{
+		Name:             "ScoreSigmoidEval 2",
+		N:                500,
+		Threads:          10,
+		Determinizations: 5,
+		Trajectories:     2500,
+		Eval:             mcts.ScoreSigmoidEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+	options = BenchmarkOptions{
+		Name:             "ScoreSigmoidEval 3",
+		N:                500,
+		Threads:          10,
+		Determinizations: 10,
+		Trajectories:     3500,
+		Eval:             mcts.ScoreSigmoidEval,
+	}
+	results = append(results, benchmarkSearch(options, mctsSearch))
+
+	saveResults(results)
+}
+
+func saveResults(r []BenchmarkResult) {
 	t := time.Now()
 	path := fmt.Sprintf("./benchmarks/benchmark_eval_%d_%02d_%02d_%02d_%02d.csv", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute())
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0666)
 	defer f.Close()
 	if err != nil {
 		log.Printf("failed to open / create file %s, writing to stdout\n", path)
-		WriteCsv(results, os.Stdout)
+		WriteCsv(r, os.Stdout)
 	} else {
-		WriteCsv(results, f)
+		WriteCsv(r, f)
 	}
-
 }
