@@ -1,3 +1,6 @@
 /.vscode
 /vendor
 /tri-peaks
+*.exe
+/benchmarks/*
+!.gitkeep
