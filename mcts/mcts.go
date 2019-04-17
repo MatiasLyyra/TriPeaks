@@ -31,6 +31,10 @@ func (sr SearchResults) BestMove() int {
 }
 
 func Search(tri *game.TriPeaks, determinizations, trajectories int, eval SimulationtEval) SearchResults {
+	initialLegalMoves, _ := tri.LegalMoves()
+	if len(initialLegalMoves) == 1 {
+		return SearchResults{SearchResult{Move: initialLegalMoves[0], Score: 1}}
+	}
 	random := rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
 	unusedCards := hiddenCards(tri)
 	rootRewards := make(map[int]float64)

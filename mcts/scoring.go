@@ -16,7 +16,7 @@ func BinaryEval(node *Node, tri *game.TriPeaks) float64 {
 }
 
 func LinearEval(node *Node, tri *game.TriPeaks) float64 {
-	return float64(tri.CardsLeft) / 28.0
+	return 1 - float64(tri.CardsLeft)/28.0
 }
 
 func ScoreEval(node *Node, tri *game.TriPeaks) float64 {
